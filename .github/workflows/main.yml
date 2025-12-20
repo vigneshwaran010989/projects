@@ -1,0 +1,382 @@
+name: Node.js CI/CD with Complete Security Scanning
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly scan on Sundays
+
+env:
+  NODE_VERSION: '20.x'
+  TRIVY_SEVERITY: 'CRITICAL,HIGH,MEDIUM'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run linter
+      run: npm run lint
+      continue-on-error: true
+    
+    - name: Run tests
+      run: npm test
+    
+    - name: Run test coverage
+      run: npm run test:coverage
+      continue-on-error: true
+    
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      if: always()
+      with:
+        files: ./coverage/lcov.info
+        flags: unittests
+
+  security-scan-vulnerabilities:
+    name: Scan Dependencies for Vulnerabilities
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner (filesystem)
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-fs-results.sarif'
+        severity: ${{ env.TRIVY_SEVERITY }}
+        scanners: 'vuln'
+    
+    - name: Upload vulnerability results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-fs-results.sarif'
+        category: 'vulnerabilities'
+    
+    - name: Run Trivy vulnerability scanner (table output)
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        severity: 'CRITICAL,HIGH'
+        scanners: 'vuln'
+        exit-code: '0'  # Don't fail on vulnerabilities, just report
+    
+    - name: Run Trivy with ignore unfixed vulnerabilities
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        severity: 'CRITICAL,HIGH'
+        scanners: 'vuln'
+        ignore-unfixed: true
+        exit-code: '1'  # Fail only on fixable vulnerabilities
+
+  security-scan-secrets:
+    name: Scan for Secrets
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for secret scanning
+    
+    - name: Run Trivy secret scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-secret-results.sarif'
+        scanners: 'secret'
+    
+    - name: Upload secret scan results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-secret-results.sarif'
+        category: 'secrets'
+    
+    - name: Run Trivy secret scanner (table output)
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        scanners: 'secret'
+        exit-code: '1'  # Fail if secrets found
+
+  security-scan-misconfig:
+    name: Scan for Misconfigurations
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Run Trivy misconfiguration scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'config'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-config-results.sarif'
+        severity: ${{ env.TRIVY_SEVERITY }}
+    
+    - name: Upload misconfiguration results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-config-results.sarif'
+        category: 'misconfigurations'
+    
+    - name: Run Trivy misconfiguration scanner (table output)
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'config'
+        scan-ref: '.'
+        format: 'table'
+        severity: 'CRITICAL,HIGH'
+        exit-code: '0'  # Don't fail on misconfigurations, just report
+
+  security-scan-license:
+    name: Scan for License Issues
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Run Trivy license scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        scanners: 'license'
+        severity: 'UNKNOWN,HIGH,CRITICAL'
+    
+    - name: Generate license report
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'json'
+        output: 'trivy-license-report.json'
+        scanners: 'license'
+    
+    - name: Upload license report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: license-report
+        path: trivy-license-report.json
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [security-scan-vulnerabilities, security-scan-secrets, security-scan-misconfig]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Build application
+      run: npm run build
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build
+        path: dist/
+        retention-days: 7
+
+  docker-build-scan:
+    name: Build and Scan Docker Image
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        load: true
+        tags: |
+          myapp:${{ github.sha }}
+          myapp:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Run Trivy vulnerability scanner on Docker image
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'image'
+        image-ref: 'myapp:${{ github.sha }}'
+        format: 'sarif'
+        output: 'trivy-docker-vuln-results.sarif'
+        severity: ${{ env.TRIVY_SEVERITY }}
+        scanners: 'vuln'
+    
+    - name: Upload Docker vulnerability results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-docker-vuln-results.sarif'
+        category: 'docker-vulnerabilities'
+    
+    - name: Run Trivy misconfiguration scanner on Docker image
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'image'
+        image-ref: 'myapp:${{ github.sha }}'
+        format: 'sarif'
+        output: 'trivy-docker-config-results.sarif'
+        severity: ${{ env.TRIVY_SEVERITY }}
+        scanners: 'misconfig'
+    
+    - name: Upload Docker misconfiguration results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-docker-config-results.sarif'
+        category: 'docker-misconfigurations'
+    
+    - name: Run comprehensive Trivy scan on Docker image
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'image'
+        image-ref: 'myapp:${{ github.sha }}'
+        format: 'table'
+        severity: 'CRITICAL,HIGH'
+        exit-code: '0'
+    
+    - name: Run Trivy scan (fail on fixable critical/high)
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'image'
+        image-ref: 'myapp:${{ github.sha }}'
+        format: 'table'
+        severity: 'CRITICAL,HIGH'
+        ignore-unfixed: true
+        exit-code: '1'
+    
+    - name: Generate full security report
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'image'
+        image-ref: 'myapp:${{ github.sha }}'
+        format: 'json'
+        output: 'trivy-full-report.json'
+    
+    - name: Upload full security report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-report
+        path: trivy-full-report.json
+        retention-days: 30
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build, docker-build-scan]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build
+        path: dist/
+    
+    - name: Download security report
+      uses: actions/download-artifact@v4
+      with:
+        name: security-report
+        path: reports/
+    
+    - name: Deploy to production
+      run: |
+        echo "Deploying to production..."
+        # Add your deployment commands here
+        # Example: aws s3 sync dist/ s3://your-bucket/
+        # Example: kubectl apply -f k8s/
+    
+    - name: Notify deployment status
+      if: success()
+      run: |
+        echo "Deployment successful!"
+        # Add notification logic (Slack, email, etc.)
+
+  security-summary:
+    name: Security Scan Summary
+    runs-on: ubuntu-latest
+    needs: [security-scan-vulnerabilities, security-scan-secrets, security-scan-misconfig, docker-build-scan]
+    if: always()
+    
+    steps:
+    - name: Download all reports
+      uses: actions/download-artifact@v4
+      if: always()
+    
+    - name: Generate summary
+      if: always()
+      run: |
+        echo "## Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Scan Results" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Vulnerability Scan: ${{ needs.security-scan-vulnerabilities.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- 🔐 Secret Scan: ${{ needs.security-scan-secrets.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- ⚙️ Misconfiguration Scan: ${{ needs.security-scan-misconfig.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- 🐳 Docker Scan: ${{ needs.docker-build-scan.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the Security tab for detailed findings." >> $GITHUB_STEP_SUMMARY
