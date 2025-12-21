@@ -81,8 +81,8 @@ jobs:
     - name: SonarQube Scan
       uses: SonarSource/sonarqube-scan-action@v7.0.0 # Ex: v4.1.0, See the latest version at https://github.com/marketplace/actions/official-sonarqube-scan
       env:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        SONAR_TOKEN: ${{ dev:secrets.SONAR_TOKEN }}
+        SONAR_HOST_URL: ${{ dev:vars.SONAR_HOST_URL }}
 
     - name: SonarQube Quality Gate check
       id: sonarqube-quality-gate-check
@@ -90,8 +90,8 @@ jobs:
       with:
         pollingTimeoutSec: 600
       env:
-          SONAR_TOKEN: ${{ dev.secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ dev.vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ dev:secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ dev:vars.SONAR_HOST_URL }}
 
   buils_docker_image_and_push:
     runs-on: self-hosted
