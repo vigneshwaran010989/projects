@@ -53,7 +53,7 @@ jobs:
         distribution: 'temurin'
         cache: maven
     - name: Unit Test Cases
-      run: mvn test
+      run: mvn test --file github-project/pom.xml
 
   build_project_and_sonar_scan:
     runs-on: ubuntu-latest
@@ -67,7 +67,7 @@ jobs:
         distribution: 'temurin'
         cache: maven
     - name: Build Project
-      run: mvn package
+      run: mvn package --file github-project/pom.xml
     - name: Upload JAR artifact
       uses: actions/upload-artifact@v4
       with:
