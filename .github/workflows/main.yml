@@ -127,7 +127,7 @@ jobs:
         context: .
         push: true
         tags: vignesh010989/bankappvignesh:latest
-        file: ./github-project/Dockerfile
+        file: github-project/Dockerfile
 
   deploy_to_kubernetes:
     runs-on: self-hosted
