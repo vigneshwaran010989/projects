@@ -1,8 +1,9 @@
 name: CICD Pipeline
 
 on:
-  push:
-    branches: [ "main" ]
+  workflow_dispatch
+  #push:
+   # branches: [ "main" ]
 
 jobs:
   compile:
