@@ -83,6 +83,7 @@ jobs:
         args: >
            "-Dsonar.projectName=My Project"
            -Dsonar.projectKey=my-projectkey
+           -Dsonar.java.binaries=build/classes,github-project/build/classes
       uses: SonarSource/sonarqube-scan-action@v7.0.0 # Ex: v4.1.0, See the latest version at https://github.com/marketplace/actions/official-sonarqube-scan
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
